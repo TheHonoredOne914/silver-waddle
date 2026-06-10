@@ -38,6 +38,15 @@ export async function multiKeyFetch(
   let headerName = "";
   let prefix = "";
 
+  let queryParamKey = false;
+  let urlObj: URL | null = null;
+
+  try {
+    urlObj = new URL(typeof input === "string" ? input : (input instanceof Request ? input.url : input.toString()));
+  } catch {}
+
+  const urlKey = urlObj?.searchParams.get("key");
+
   if (authHeader && authHeader.includes(",")) {
     if (authHeader.toLowerCase().startsWith("bearer ")) {
       prefix = authHeader.slice(0, 7);
@@ -52,6 +61,9 @@ export async function multiKeyFetch(
   } else if (subscriptionTokenHeader && subscriptionTokenHeader.includes(",")) {
     keyString = subscriptionTokenHeader;
     headerName = "X-Subscription-Token";
+  } else if (urlKey && urlKey.includes(",")) {
+    keyString = urlKey;
+    queryParamKey = true;
   } else {
     // No comma-separated keys found, proceed normally.
     return fetch(input, init);
@@ -70,41 +82,71 @@ export async function multiKeyFetch(
   for (let attempt = 0; attempt < keys.length; attempt++) {
     const activeKey = keys[(currentIndex + attempt) % keys.length];
     
-    // Update headers with the single active key
+    // Update headers or URL with the single active key
     const newHeaders = new Headers(requestHeaders);
-    newHeaders.set(headerName, prefix + activeKey);
+    if (!queryParamKey) {
+      newHeaders.set(headerName, prefix + activeKey);
+    }
     
     let fetchPromise: Promise<Response>;
 
-    if (isRequestObj && requestObj) {
-      // Reconstruct the request to avoid "body stream already read" if we need to retry
-      // Note: If it's a stream body we might not be able to clone it easily, 
-      // but usually SDKs pass stringified JSON which clones fine.
-      const clonedReq = requestObj.clone();
-      const newInit: RequestInit = {
-        method: clonedReq.method,
-        headers: newHeaders,
-        body: clonedReq.body ? await clonedReq.clone().arrayBuffer() : null,
-        redirect: clonedReq.redirect,
-        signal: init?.signal ?? clonedReq.signal,
-      };
-      fetchPromise = fetch(clonedReq.url, newInit);
+    if (queryParamKey && urlObj) {
+      urlObj.searchParams.set("key", activeKey);
+      if (isRequestObj && requestObj) {
+        const clonedReq = requestObj.clone();
+        const newInit: RequestInit = {
+          method: clonedReq.method,
+          headers: newHeaders,
+          body: clonedReq.body ? await clonedReq.clone().arrayBuffer() : null,
+          redirect: clonedReq.redirect,
+          signal: init?.signal ?? clonedReq.signal,
+        };
+        fetchPromise = fetch(urlObj.toString(), newInit);
+      } else {
+        const newInit: RequestInit = { ...init, headers: newHeaders };
+        fetchPromise = fetch(urlObj.toString(), newInit);
+      }
     } else {
-      const newInit: RequestInit = { ...init, headers: newHeaders };
-      fetchPromise = fetch(input, newInit);
+      if (isRequestObj && requestObj) {
+        // Reconstruct the request to avoid "body stream already read" if we need to retry
+        // Note: If it's a stream body we might not be able to clone it easily, 
+        // but usually SDKs pass stringified JSON which clones fine.
+        const clonedReq = requestObj.clone();
+        const newInit: RequestInit = {
+          method: clonedReq.method,
+          headers: newHeaders,
+          body: clonedReq.body ? await clonedReq.clone().arrayBuffer() : null,
+          redirect: clonedReq.redirect,
+          signal: init?.signal ?? clonedReq.signal,
+        };
+        fetchPromise = fetch(clonedReq.url, newInit);
+      } else {
+        const newInit: RequestInit = { ...init, headers: newHeaders };
+        fetchPromise = fetch(input, newInit);
+      }
     }
 
-    lastResponse = await fetchPromise;
+    try {
+      lastResponse = await fetchPromise;
+    } catch (networkErr) {
+      // Network-level failure (DNS, connection reset, timeout, etc.) — rotate to next key
+      const maskedKey = `...${activeKey.slice(-4)}`;
+      logger.warn(`[multi-key-fetch] Key ${maskedKey} network error: ${(networkErr as Error)?.message ?? networkErr}. Rolling over to next key. (${attempt + 1}/${keys.length})`);
+      if (attempt === keys.length - 1) throw networkErr; // all keys exhausted, re-throw
+      continue;
+    }
 
-    // Retry if rate limited (429) or quota exceeded/invalid key (401, 402, 403)
-    if ([429, 401, 402, 403].includes(lastResponse.status)) {
+    // Retry on auth/rate-limit errors AND server errors — any non-success response
+    // that indicates the key or server is temporarily broken
+    const retryableStatus = [401, 402, 403, 408, 429, 500, 502, 503, 504, 529].includes(lastResponse.status);
+    if (retryableStatus) {
       const maskedKey = `...${activeKey.slice(-4)}`;
       logger.warn(`[multi-key-fetch] Key ${maskedKey} got ${lastResponse.status}. Rolling over to next key. (${attempt + 1}/${keys.length})`);
       continue;
     }
 
-    // Success or unrecoverable error (like 400 Bad Request, 500)
-    // Update cache so next time we start at the key that worked (or at least didn't rate limit)
+    // Success or non-retryable error (like 400 Bad Request)
+    // Update cache so next time we start at the key that worked
     keyIndexCache.set(cacheKey, (currentIndex + attempt) % keys.length);
     return lastResponse;
   }

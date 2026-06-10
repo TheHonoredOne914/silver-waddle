@@ -73,6 +73,7 @@ export interface CoreResearchAnswerInput {
   allowSyntheticSourceUsage?: boolean;
   dimensionWeights?: DimensionEngineOutput | null;
   autoFallback?: boolean;
+  onStream?: (chunk: string) => void;
 }
 
 export interface CoreResearchAnswerResult {
@@ -154,7 +155,7 @@ export async function generateCoreResearchAnswer(input: CoreResearchAnswerInput)
     claimGraph: effectiveClaimGraph,
   };
 
-  const finalAnswerResult = await buildFinalAnswer(synthesisInput, sourceIds, sourceGapReport);
+  const finalAnswerResult = await buildFinalAnswer(synthesisInput, sourceIds, sourceGapReport, input.onStream);
   let finalAnswer = finalAnswerResult.finalAnswer;
   let deterministicCitedFallbackUsed = false;
   const repairPasses: RepairPassReport[] = [];
@@ -586,7 +587,7 @@ function formatUnsupportedClaimDisclosure(count: number): string {
   return `${count} high-risk claim(s) could not be fully proven from the ClaimGraph or ClaimLedger. Treat them as qualified allegations, turn them into POIs or committee questions, or omit them from floor speeches; the raw unsupported fragments are withheld from the answer to avoid promoting unverified claims.`;
 }
 
-async function buildFinalAnswer(input: CoreResearchAnswerInput, sourceIds: number[], sourceGapReport: SourceGapReport | null): Promise<{ finalAnswer: string; promptBudgetReports: PromptBudgetReport[]; providerFailureReports: ProviderFailureReport[] }> {
+async function buildFinalAnswer(input: CoreResearchAnswerInput, sourceIds: number[], sourceGapReport: SourceGapReport | null, onStream?: (chunk: string) => void): Promise<{ finalAnswer: string; promptBudgetReports: PromptBudgetReport[]; providerFailureReports: ProviderFailureReport[] }> {
   const requestedMode = input.generationMode ?? process.env.CORE_GENERATION_MODE ?? (input.providerRouter ? "model" : "deterministic");
   if (requestedMode !== "model") return { finalAnswer: buildAnswerText(input, sourceIds, sourceGapReport), promptBudgetReports: [], providerFailureReports: [] };
   if (!input.providerRouter || !input.providerName || !input.model) {
@@ -602,14 +603,14 @@ async function buildFinalAnswer(input: CoreResearchAnswerInput, sourceIds: numbe
     forceFallback = false;
 
     const compressionLevel = input.promptCompressionLevel ?? 0;
-    const first = await tryGeneration(input, candidate.providerName, candidate.model, sourceIds, compressionLevel, promptBudgetReports)
+    const first = await tryGeneration(input, candidate.providerName, candidate.model, sourceIds, compressionLevel, promptBudgetReports, onStream)
       .catch((error) => ({ error }));
     if (!isGenerationAttemptError(first)) return { finalAnswer: first as string, promptBudgetReports, providerFailureReports };
     const firstReport = classifyProviderError(candidate.providerName, first.error);
     input.providerRunState?.recordFailure(candidate.providerName, firstReport);
     providerFailureReports.push({ ...firstReport, model: candidate.model, stage: "core_generation", fallbackAttempted: candidates.length > 1 });
     if (firstReport.code === "request_too_large") {
-      const retry = await tryGeneration(input, candidate.providerName, candidate.model, sourceIds, compressionLevel + 2, promptBudgetReports)
+      const retry = await tryGeneration(input, candidate.providerName, candidate.model, sourceIds, compressionLevel + 2, promptBudgetReports, onStream)
         .catch((error) => ({ error }));
       if (!isGenerationAttemptError(retry)) return { finalAnswer: retry as string, promptBudgetReports, providerFailureReports };
       const retryReport = classifyProviderError(candidate.providerName, retry.error);
@@ -633,6 +634,7 @@ async function tryGeneration(
   sourceIds: number[],
   compressionLevel: number,
   reports: PromptBudgetReport[],
+  onStream?: (chunk: string) => void,
 ): Promise<string> {
   const budget = getPromptBudget({ providerName, model, mode: input.mode, compressionLevel });
   const promptInput = { ...input, providerName, model, forceFinalSourceIds: sourceIds, promptCompressionLevel: compressionLevel };
@@ -663,6 +665,7 @@ async function tryGeneration(
     timeoutMs,
     temperature: 0.2,
     maxTokens: budget.maxOutputTokens,
+    onStream,
     messages: [
       { role: "system", content: buildCoreAnswerSystemPrompt(input) },
       { role: "user", content: prompt },

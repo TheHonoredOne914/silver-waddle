@@ -66,6 +66,7 @@ import { envelopeRunEvent as buildRunEventEnvelope, TerminalWriteGuard } from ".
 import { detectFreshnessNeeded } from "../core/freshness/freshness-router.js";
 import { getSourceUsagePolicy } from "../core/config/source-usage-policy.js";
 import { ProviderRouter as CoreProviderRouter } from "../core/providers/provider-router.js";
+import { multiKeyFetch } from "../lib/multi-key-fetch.js";
 import { GroqProvider } from "../core/providers/groq-provider.js";
 import { OpenRouterProvider } from "../core/providers/openrouter-provider.js";
 import { GeminiProvider } from "../core/providers/gemini-provider.js";
@@ -1450,15 +1451,15 @@ async function persistResearchExhausted(input: {
 export function buildCoreProviderRouter(keys: RequestKeys, rawModelId: string): { router?: CoreProviderRouter; providerName?: ProviderName; model?: string; error?: string } {
   const parsed = parseProviderModelId(rawModelId);
   const router = new CoreProviderRouter();
-  if (keys.groqKey || process.env.GROQ_API_KEY) router.register(new GroqProvider({ apiKey: keys.groqKey ?? process.env.GROQ_API_KEY }));
+  if (keys.groqKey || process.env.GROQ_API_KEY) router.register(new GroqProvider({ apiKey: keys.groqKey ?? process.env.GROQ_API_KEY, fetchFn: multiKeyFetch }));
   const openrouterKey = keys.openrouterKey ?? process.env.OPENROUTER_API_KEY ?? process.env.OPENROUTER_KEY;
-  if (openrouterKey) router.register(new OpenRouterProvider({ apiKey: openrouterKey }));
-  if (keys.geminiKey || process.env.GEMINI_API_KEY) router.register(new GeminiProvider({ apiKey: keys.geminiKey ?? process.env.GEMINI_API_KEY }));
-  if (keys.nvidiaKey || process.env.NVIDIA_API_KEY) router.register(new NvidiaProvider({ apiKey: keys.nvidiaKey ?? process.env.NVIDIA_API_KEY }));
+  if (openrouterKey) router.register(new OpenRouterProvider({ apiKey: openrouterKey, fetchFn: multiKeyFetch }));
+  if (keys.geminiKey || process.env.GEMINI_API_KEY) router.register(new GeminiProvider({ apiKey: keys.geminiKey ?? process.env.GEMINI_API_KEY, fetchFn: multiKeyFetch }));
+  if (keys.nvidiaKey || process.env.NVIDIA_API_KEY) router.register(new NvidiaProvider({ apiKey: keys.nvidiaKey ?? process.env.NVIDIA_API_KEY, fetchFn: multiKeyFetch }));
   const githubToken = keys.githubToken ?? process.env.GITHUB_MODELS_API_KEY ?? process.env.GITHUB_TOKEN;
-  if (githubToken) router.register(new GithubProvider({ apiKey: githubToken }));
+  if (githubToken) router.register(new GithubProvider({ apiKey: githubToken, fetchFn: multiKeyFetch }));
   const cerebrasKey = keys.cerebrasKey ?? process.env.CEREBRAS_API_KEY;
-  if (cerebrasKey) router.register(new CerebrasProvider({ apiKey: cerebrasKey }));
+  if (cerebrasKey) router.register(new CerebrasProvider({ apiKey: cerebrasKey, fetchFn: multiKeyFetch }));
   if (parsed.prefix === "groq") {
     if (!keys.groqKey && !process.env.GROQ_API_KEY) return { error: "Groq provider unavailable: missing API key" };
     return { router, providerName: "groq", model: parsed.modelId };
@@ -4192,6 +4193,9 @@ async function handleMultiSearch(
             corePipelineData: event.data ?? {},
           });
         },
+        onStream: (chunk) => {
+          send({ type: 'answer_delta', content: chunk });
+        },
         signal: opts.abortSignal,
       });
       corePipelineResult = coreResult;
@@ -5155,6 +5159,12 @@ router.post("/anthropic/conversations/:id/messages", async (req, res) => {
         liveRetrieval: true,
         allowMockRetrieval: false,
         allowSyntheticSourceUsage: false,
+        onStream: (chunk) => {
+          sendRunEvent('answer_delta', { content: chunk });
+        },
+        onStream: (chunk: string) => {
+          sendRunEvent('answer_delta', { content: chunk });
+        },
         searchOptions: {
           live: true,
           allowMock: false,

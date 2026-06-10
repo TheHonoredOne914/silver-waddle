@@ -5,6 +5,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ProviderRuntimeProvider } from "@/hooks/use-provider-models";
 import NotFound from "@/pages/not-found";
 import Chat from "@/pages/chat";
+import AuthPage from "@/pages/auth";
+import { Switch, Route, useLocation } from "wouter";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,9 +22,9 @@ const queryClient = new QueryClient({
   },
 });
 
+
 function AnimatedRoutes() {
-  const location = window.location.pathname;
-  const Page = location === "/" || location === "/chat" ? Chat : NotFound;
+  const [location] = useLocation();
 
   return (
     <AnimatePresence mode="wait">
@@ -35,7 +37,12 @@ function AnimatedRoutes() {
         transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
       >
         <ProviderRuntimeProvider>
-          <Page />
+          <Switch location={location}>
+            <Route path="/" component={Chat} />
+            <Route path="/chat" component={Chat} />
+            <Route path="/auth" component={AuthPage} />
+            <Route component={NotFound} />
+          </Switch>
         </ProviderRuntimeProvider>
       </motion.div>
     </AnimatePresence>

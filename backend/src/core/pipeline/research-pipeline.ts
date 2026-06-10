@@ -61,6 +61,7 @@ export interface ResearchPipelineInput {
   providerRunState?: ProviderRunState;
   providerStatuses?: ProviderResearchStatus[];
   autoFallback?: boolean;
+  onStream?: (chunk: string) => void;
   userSelectedModels?: string[];
   researchModelPlan?: ResearchModelPlan;
   signal?: AbortSignal;
@@ -341,6 +342,7 @@ export async function runResearchPipeline(input: ResearchPipelineInput): Promise
         providerRunState,
         providerStatuses: input.providerStatuses,
         autoFallback: input.autoFallback === true,
+        onStream: input.onStream,
         trustRegisteredProvidersWithoutStatus: input.trustRegisteredProvidersWithoutStatus,
         providerCallTimeoutMs: latencyBudget.providerCallTimeoutMs,
         promptCompressionLevel: latencyBudget.getCompressionLevel("generation"),

@@ -10,6 +10,7 @@ export interface ProviderRequest {
   retries?: number;
   metadata?: Record<string, unknown>;
   signal?: AbortSignal;
+  onStream?: (chunk: string) => void;
 }
 
 export interface ProviderResponse {
