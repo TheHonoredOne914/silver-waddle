@@ -24,6 +24,7 @@ import { getGroqClient, isGroqEnabled } from "../lib/groq-client.js";
 import { getOllamaClient, isOllamaEnabled } from "../lib/ollama-client.js";
 import { getNvidiaClient, isNvidiaEnabled } from "../lib/nvidia-client.js";
 import { getGeminiClient, isGeminiEnabled } from "../lib/gemini-client.js";
+import { getCerebrasClient } from "../lib/cerebras-client.js";
 
 import { searchWeb, searchWebDeep, searchIndianKanoon, formatSearchResults, deduplicateResults, engineerQueryForIndia, engineerQueryForMedia, engineerQueryForSociocultural, engineerQueryForDemocracy } from "../lib/web-search.js";
 import type { CourtJudgement } from "../lib/web-search.js";
@@ -70,6 +71,7 @@ import { OpenRouterProvider } from "../core/providers/openrouter-provider.js";
 import { GeminiProvider } from "../core/providers/gemini-provider.js";
 import { NvidiaProvider } from "../core/providers/nvidia-provider.js";
 import { GithubProvider } from "../core/providers/github-provider.js";
+import { CerebrasProvider } from "../core/providers/cerebras-provider.js";
 import type { ProviderName } from "../core/providers/provider-types.js";
 import { writeAnthropicSseEvent } from "./anthropic/sse-bridge.js";
 import { shouldUseCoreFinalAnswer } from "./anthropic/final-response-adapter.js";
@@ -1455,6 +1457,8 @@ export function buildCoreProviderRouter(keys: RequestKeys, rawModelId: string): 
   if (keys.nvidiaKey || process.env.NVIDIA_API_KEY) router.register(new NvidiaProvider({ apiKey: keys.nvidiaKey ?? process.env.NVIDIA_API_KEY }));
   const githubToken = keys.githubToken ?? process.env.GITHUB_MODELS_API_KEY ?? process.env.GITHUB_TOKEN;
   if (githubToken) router.register(new GithubProvider({ apiKey: githubToken }));
+  const cerebrasKey = keys.cerebrasKey ?? process.env.CEREBRAS_API_KEY;
+  if (cerebrasKey) router.register(new CerebrasProvider({ apiKey: cerebrasKey }));
   if (parsed.prefix === "groq") {
     if (!keys.groqKey && !process.env.GROQ_API_KEY) return { error: "Groq provider unavailable: missing API key" };
     return { router, providerName: "groq", model: parsed.modelId };
@@ -1474,6 +1478,10 @@ export function buildCoreProviderRouter(keys: RequestKeys, rawModelId: string): 
   if (parsed.prefix === "github") {
     if (!githubToken) return { error: "GitHub Models provider unavailable: missing token" };
     return { router, providerName: "github", model: parsed.modelId };
+  }
+  if (parsed.prefix === "cerebras") {
+    if (!cerebrasKey) return { error: "Cerebras provider unavailable: missing API key" };
+    return { router, providerName: "cerebras", model: parsed.modelId };
   }
   return { error: `Core model-backed generation does not support provider prefix '${parsed.prefix}'` };
 }
@@ -1944,6 +1952,7 @@ async function handleProviderAllModes(
     jinaKey?: string | null;
     openrouterKey?: string | null;
     githubToken?: string | null;
+    cerebrasKey?: string | null;
     hfToken?: string | null;
     getIsDisconnected?: () => boolean;
     abortSignal?: AbortSignal;
@@ -2039,6 +2048,10 @@ Give sharp, specific arguments. Include counter-arguments to anticipate.
     client = getGithubModelsClient(githubToken ?? null);
     modelId = parsedModel.modelId;
     providerLabel = "github";
+  } else if (parsedModel.prefix === "cerebras") {
+    client = getCerebrasClient(opts.cerebrasKey ?? process.env.CEREBRAS_API_KEY);
+    modelId = parsedModel.modelId;
+    providerLabel = "cerebras";
   } else {
     client = getNvidiaClient(nvidiaKey);
     modelId = parsedModel.modelId;
@@ -3811,6 +3824,7 @@ async function handleMultiSearch(
     firecrawlKey?: string | null;
     jinaKey?: string | null;
     openrouterKey?: string | null;
+    cerebrasKey?: string | null;
     hfToken?: string | null;
     getIsDisconnected?: () => boolean;
     agendaIntelligence?: AgendaIntelligence;
@@ -3954,6 +3968,10 @@ async function handleMultiSearch(
       client = getOpenRouterClient(openrouterKey ?? null);
       modelId = parsedModel.modelId;
       providerLabel = "OpenRouter " + modelId.replace(/-(instruct|preview|versatile|latest)$/i, "").slice(0, 15);
+    } else if (parsedModel.prefix === "cerebras") {
+      client = getCerebrasClient(opts.cerebrasKey ?? process.env.CEREBRAS_API_KEY);
+      modelId = parsedModel.modelId;
+      providerLabel = "Cerebras " + modelId.slice(0, 15);
     } else {
       client = getGroqClient(groqKey);
       modelId = rawModelId;
@@ -5441,6 +5459,7 @@ router.post("/anthropic/conversations/:id/messages", async (req, res) => {
         firecrawlKey: keys.firecrawlKey,
         jinaKey: keys.jinaKey,
         openrouterKey: keys.openrouterKey,
+        cerebrasKey: keys.cerebrasKey,
         hfToken: keys.hfToken,
         getIsDisconnected: () => clientDisconnected,
         abortSignal: requestAbortController.signal,
@@ -5475,6 +5494,7 @@ router.post("/anthropic/conversations/:id/messages", async (req, res) => {
       jinaKey: keys.jinaKey,
       openrouterKey: keys.openrouterKey,
       githubToken: keys.githubToken,
+      cerebrasKey: keys.cerebrasKey,
       hfToken: keys.hfToken,
       getIsDisconnected: () => clientDisconnected,
       abortSignal: requestAbortController.signal,

@@ -595,7 +595,12 @@ async function buildFinalAnswer(input: CoreResearchAnswerInput, sourceIds: numbe
   const candidates = buildGenerationCandidates(input);
   const promptBudgetReports: PromptBudgetReport[] = [];
   const providerFailureReports: ProviderFailureReport[] = [];
-  for (const candidate of candidates) {
+  let forceFallback = false;
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    if (i > 0 && input.autoFallback !== true && !forceFallback) break;
+    forceFallback = false;
+
     const compressionLevel = input.promptCompressionLevel ?? 0;
     const first = await tryGeneration(input, candidate.providerName, candidate.model, sourceIds, compressionLevel, promptBudgetReports)
       .catch((error) => ({ error }));
@@ -610,6 +615,7 @@ async function buildFinalAnswer(input: CoreResearchAnswerInput, sourceIds: numbe
       const retryReport = classifyProviderError(candidate.providerName, retry.error);
       input.providerRunState?.recordFailure(candidate.providerName, retryReport);
       providerFailureReports.push({ ...retryReport, model: candidate.model, stage: "core_generation", fallbackAttempted: candidates.length > 1 });
+      if (retryReport.code === "request_too_large") forceFallback = true;
     }
   }
   const safe = providerFailureReports[0] ?? safeProviderErrorReport(input.providerName, new Error("Core generation provider failed"), { stage: "core_generation" });
@@ -668,7 +674,7 @@ async function tryGeneration(
 export function buildGenerationCandidates(input: CoreResearchAnswerInput): Array<{ providerName: ProviderName; model: string }> {
   const registered = typeof (input.providerRouter as any)?.getRegisteredProviderNames === "function"
     ? ((input.providerRouter as any).getRegisteredProviderNames() as ProviderName[])
-    : (["nvidia", "gemini", "github", "openrouter", "groq"] as ProviderName[]).filter((providerName) => (input.providerRouter as any)?.hasProvider?.(providerName));
+    : (["nvidia", "gemini", "github", "openrouter", "groq", "cerebras"] as ProviderName[]).filter((providerName) => (input.providerRouter as any)?.hasProvider?.(providerName));
   const defaults: Record<ProviderName, string> = {
     groq: "llama-3.3-70b-versatile",
     openrouter: "qwen/qwen3-32b:free",
@@ -678,9 +684,13 @@ export function buildGenerationCandidates(input: CoreResearchAnswerInput): Array
     cerebras: "llama3.3-70b",
     openai: "gpt-4.1",
   };
-  const fallbackProviders = input.autoFallback === true
-    ? registered.filter((providerName) => providerName !== input.providerName)
-    : [];
+  const fallbackProviders = registered
+    .filter((providerName) => providerName !== input.providerName)
+    .sort((a, b) => {
+      const budgetA = getLimitProfile(a, defaults[a]).providerMaxInputTokens ?? 0;
+      const budgetB = getLimitProfile(b, defaults[b]).providerMaxInputTokens ?? 0;
+      return budgetB - budgetA;
+    });
   const candidates = [
     { providerName: input.providerName!, model: preferredModelForProvider(input.providerName!, input.model!, input, defaults) },
     ...fallbackProviders.map((providerName) => ({ providerName, model: preferredModelForProvider(providerName, defaults[providerName], input, defaults) })),

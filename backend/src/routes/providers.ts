@@ -5,6 +5,7 @@ import { getGroqClient, isGroqEnabled } from "../lib/groq-client.js";
 import { getOllamaClient, isOllamaEnabled } from "../lib/ollama-client.js";
 import { isNvidiaEnabled, NVIDIA_BASE_URL } from "../lib/nvidia-client.js";
 import { getGeminiClient } from "../lib/gemini-client.js";
+import { CEREBRAS_BASE_URL, CEREBRAS_CATALOG } from "../lib/cerebras-client.js";
 import { extractKeys } from "../lib/provider-router.js";
 import type { RequestKeys } from "../lib/types.js";
 import { redactSecretString } from "../core/security/secret-redaction.js";
@@ -98,6 +99,14 @@ export const GITHUB_MODELS_CATALOG: ProviderModelListItem[] = [
   { id: "mistral-ai/mistral-large", name: "Mistral Large", ownedBy: "mistral-ai", badge: "mistral" },
 ];
 
+export const CEREBRAS_MODELS_CATALOG: ProviderModelListItem[] = CEREBRAS_CATALOG.map((model) => ({
+  id: model.id,
+  name: model.name,
+  ownedBy: "cerebras",
+  badge: model.badge,
+  contextWindow: model.contextWindow,
+}));
+
 const providerStatusCache = new Map<string, { expiresAt: number; payload: ProviderStatusPayload }>();
 
 export function buildPrefixedModelId(provider: string, modelId: string): string {
@@ -112,6 +121,19 @@ export function normalizeNvidiaModels(data: unknown): ProviderModelListItem[] {
       name: item.display_name ?? item.name ?? readableModelName(String(item.id ?? "")),
       ownedBy: item.owned_by ?? ownedByFromId(String(item.id ?? "")),
       badge: badgeForNvidiaModel(String(item.id ?? "")),
+      contextWindow: item.context_window ?? item.context_length,
+    })).filter((item: ProviderModelListItem) => item.id),
+  ]);
+}
+
+export function normalizeCerebrasModels(data: unknown): ProviderModelListItem[] {
+  const raw = Array.isArray((data as any)?.data) ? (data as any).data : Array.isArray(data) ? data as any[] : [];
+  return dedupeModels([
+    ...raw.map((item: any) => ({
+      id: String(item.id ?? item.name ?? "").trim(),
+      name: item.display_name ?? item.name ?? readableModelName(String(item.id ?? "")),
+      ownedBy: item.owned_by ?? "cerebras",
+      badge: item.badge ?? badgeForCerebrasModel(String(item.id ?? "")),
       contextWindow: item.context_window ?? item.context_length,
     })).filter((item: ProviderModelListItem) => item.id),
   ]);
@@ -210,6 +232,56 @@ export async function listGithubModels(token: string | null | undefined, fetchFn
   }
 }
 
+export async function listCerebrasModels(apiKey: string | null | undefined, fetchFn: typeof fetch = fetch): Promise<ProviderModelListPayload> {
+  if (!apiKey?.trim()) throw new ProviderRouteError("missing_key", "Cerebras API key is not configured. Provide one in Settings -> Keys.", 400);
+  const started = Date.now();
+  try {
+    const response = await fetchWithTimeout(fetchFn, `${CEREBRAS_BASE_URL}/models`, {
+      headers: { Authorization: `Bearer ${apiKey.trim()}` },
+    }, 12_000);
+    if (!response.ok) {
+      const body = redactKnownSecret(await safeResponseText(response), apiKey);
+      throw new ProviderRouteError(statusFromHttp(response.status), `Cerebras models endpoint returned ${response.status}: ${body}`, response.status);
+    }
+    const liveModels = normalizeCerebrasModels(await response.json());
+    const displayModels = dedupeModels([...liveModels, ...CEREBRAS_MODELS_CATALOG]).sort(sortModels);
+    return {
+      provider: "cerebras",
+      configured: true,
+      healthy: liveModels.length > 0,
+      status: liveModels.length > 0 ? "healthy" : "network_error",
+      source: "live",
+      models: displayModels,
+      modelCount: displayModels.length,
+      chatVerified: liveModels.length > 0,
+      canChat: liveModels.length > 0,
+      canListModels: true,
+      liveModelListVerified: liveModels.length > 0,
+      latencyMs: Date.now() - started,
+    };
+  } catch (err) {
+    const status = err instanceof ProviderRouteError ? err.code as ProviderRouteStatus : statusCodeFromError(err);
+    const invalidOrRateLimited = status === "invalid_key" || status === "rate_limited";
+    const displayModels = invalidOrRateLimited ? [] : [...CEREBRAS_MODELS_CATALOG].sort(sortModels);
+    return {
+      provider: "cerebras",
+      configured: true,
+      healthy: false,
+      status: invalidOrRateLimited ? status : "catalog_fallback",
+      source: "catalog_fallback",
+      models: displayModels,
+      modelCount: displayModels.length,
+      chatVerified: false,
+      canChat: false,
+      canListModels: !invalidOrRateLimited,
+      liveModelListVerified: false,
+      catalogFallbackOnly: true,
+      error: redactKnownSecret(safeMessage(err, "Failed to verify Cerebras models"), apiKey),
+      latencyMs: Date.now() - started,
+    };
+  }
+}
+
 router.get("/groq/models", async (req, res) => {
   const keys = extractKeys(req);
   if (!isGroqEnabled(keys.groqKey)) {
@@ -297,6 +369,20 @@ router.get("/github/models", async (req, res) => {
     sendProviderModelPayload(res, await listGithubModels(token));
   } catch (err: any) {
     sendProviderModelPayload(res, providerRouteErrorPayload("github", err.code ?? statusCodeFromError(err), safeMessage(err, "Failed to list GitHub Models"), true));
+  }
+});
+
+router.get("/cerebras/models", async (req, res) => {
+  const keys = extractKeys(req);
+  const key = keys.cerebrasKey ?? process.env.CEREBRAS_API_KEY ?? "";
+  if (!key) {
+    sendProviderModelPayload(res, providerRouteErrorPayload("cerebras", "missing_key", "Cerebras API key is not configured. Provide one in Settings -> Keys.", false));
+    return;
+  }
+  try {
+    sendProviderModelPayload(res, await listCerebrasModels(key));
+  } catch (err: any) {
+    sendProviderModelPayload(res, providerRouteErrorPayload("cerebras", err.code ?? statusCodeFromError(err), safeMessage(err, "Failed to list Cerebras models"), true));
   }
 });
 
@@ -468,6 +554,10 @@ export async function buildProviderStatusPayload(keys: RequestKeys, options: { f
       provider: "github", configured: true, healthy: false, status: "catalog_fallback" as const, source: "catalog_fallback" as const,
       models: GITHUB_MODELS_CATALOG.map((m) => ({ id: m.id })),
     })), timeoutMs, configuredFromSource(keys.githubToken, process.env.GITHUB_MODELS_API_KEY ?? process.env.GITHUB_TOKEN))],
+    ["cerebras", () => probeProviderModels("cerebras", Boolean(keys.cerebrasKey ?? process.env.CEREBRAS_API_KEY), () => listCerebrasModels(keys.cerebrasKey ?? process.env.CEREBRAS_API_KEY, fetchFn).catch(() => ({
+      provider: "cerebras", configured: true, healthy: false, status: "catalog_fallback" as const, source: "catalog_fallback" as const,
+      models: CEREBRAS_MODELS_CATALOG.map((m) => ({ id: m.id })),
+    })), timeoutMs, configuredFromSource(keys.cerebrasKey, process.env.CEREBRAS_API_KEY))],
     ["gemini", () => probeProviderModels("gemini", Boolean(keys.geminiKey ?? process.env.GEMINI_API_KEY), async () => {
       const geminiKey = keys.geminiKey ?? process.env.GEMINI_API_KEY ?? "";
       if (!geminiKey) throw new ProviderRouteError("missing_key", "Gemini key missing", 400);
@@ -756,6 +846,7 @@ export function statusCacheKey(keys: RequestKeys): string {
     ["openrouter", keys.openrouterKey ?? process.env.OPENROUTER_API_KEY ?? process.env.OPENROUTER_KEY ?? ""],
     ["nvidia", keys.nvidiaKey ?? process.env.NVIDIA_API_KEY ?? ""],
     ["github", keys.githubToken ?? process.env.GITHUB_MODELS_API_KEY ?? process.env.GITHUB_TOKEN ?? ""],
+    ["cerebras", keys.cerebrasKey ?? process.env.CEREBRAS_API_KEY ?? ""],
     ["gemini", keys.geminiKey ?? process.env.GEMINI_API_KEY ?? ""],
     ["tavily", keys.tavilyKey ?? process.env.TAVILY_API_KEY ?? ""],
     ["jina", keys.jinaKey ?? process.env.JINA_API_KEY ?? process.env.JINA_KEY ?? ""],
@@ -962,6 +1053,12 @@ function badgeForNvidiaModel(id: string): string | undefined {
   return undefined;
 }
 
+function badgeForCerebrasModel(id: string): string | undefined {
+  if (/70b/i.test(id)) return "flagship";
+  if (/8b/i.test(id)) return "fast";
+  return undefined;
+}
+
 function ownedByFromId(id: string): string {
   return id.includes("/") ? id.split("/")[0] : "nvidia";
 }
@@ -976,7 +1073,13 @@ function dedupeModels(models: ProviderModelListItem[]): ProviderModelListItem[] 
 }
 
 function sortModels(a: { id: string }, b: { id: string }): number {
-  const rank = (id: string) => /kimi-k2\.6/i.test(id) ? 0 : /nemotron-ultra/i.test(id) ? 1 : /nemotron-super/i.test(id) ? 2 : 10;
+  const rank = (id: string) =>
+    /kimi-k2\.6/i.test(id) ? 0
+      : /nemotron-ultra/i.test(id) ? 1
+      : /nemotron-super/i.test(id) ? 2
+      : /llama3\.3-70b/i.test(id) ? 3
+      : /llama3\.1-8b/i.test(id) ? 4
+      : 10;
   return rank(a.id) - rank(b.id) || a.id.localeCompare(b.id);
 }
 

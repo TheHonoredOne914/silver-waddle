@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api-fetch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -240,7 +240,7 @@ const handleSave = async () => {
               </Button>
             </div>
             <div className="grid grid-cols-2 gap-2 rounded-md border border-border/60 bg-muted/20 p-2">
-              {["groq", "openrouter", "nvidia", "github", "gemini", "ollama", "serper", "exa", "tavily", "brave", "firecrawl", "jina", "scraperapi", "zenrows", "scrapingbee", "geekflare"].map((provider) => {
+              {["groq", "openrouter", "nvidia", "github", "gemini", "ollama", "cerebras", "serper", "exa", "tavily", "brave", "firecrawl", "jina", "scraperapi", "zenrows", "scrapingbee", "geekflare"].map((provider) => {
                 const health = providerStatus[provider as keyof typeof providerStatus];
                 const currentConfigured = Boolean(providerKeyValue(provider, keys).trim());
                 const savedConfigured = Boolean(providerKeyValue(provider, savedKeys).trim());

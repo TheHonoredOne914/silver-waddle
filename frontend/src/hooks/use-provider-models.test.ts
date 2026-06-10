@@ -59,6 +59,7 @@ test("catalog models can display and stay selectable for explicit user choice", 
   const statuses = {
     groq: deriveStatusFromModelRoute("groq", baseStatus, [{ id: "llama-3.3-70b-versatile" }]),
     gemini: deriveStatusFromModelRoute("gemini", { ...baseStatus, provider: "gemini", healthy: true, status: "healthy", canChat: true }, [{ id: "gemini-2.5-pro" }]),
+    cerebras: deriveStatusFromModelRoute("cerebras", { ...baseStatus, provider: "cerebras", healthy: true, status: "healthy", canChat: true }, [{ id: "llama3.3-70b" }]),
     nvidia: { ...baseStatus, provider: "nvidia" },
     openrouter: { ...baseStatus, provider: "openrouter" },
     github: { ...baseStatus, provider: "github" },
@@ -71,14 +72,14 @@ test("catalog models can display and stay selectable for explicit user choice", 
   const models = {
     groq: [{ id: "llama-3.3-70b-versatile" }],
     gemini: [{ id: "gemini-2.5-pro" }],
+    cerebras: [{ id: "llama3.3-70b" }],
     nvidia: [],
     openrouter: [],
     github: [],
     ollama: [],
-    cerebras: [],
   };
 
-  assert.deepEqual(buildHealthyResearchModels(statuses, models), ["groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-pro"]);
+  assert.deepEqual(buildHealthyResearchModels(statuses, models), ["groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-pro", "cerebras/llama3.3-70b"]);
 });
 
 test("stale selected model repairs only to a research-usable model", () => {

@@ -1,9 +1,9 @@
 export type ProviderModel = { id: string; ownedBy?: string; name?: string };
 
 export const DEFAULT_GROQ_MODEL = "groq/llama-3.3-70b-versatile";
-export const VALID_MODEL_PREFIXES = ["groq/", "nvidia/", "ollama/", "gemini/", "openrouter/", "github/"];
+export const VALID_MODEL_PREFIXES = ["groq/", "nvidia/", "ollama/", "gemini/", "openrouter/", "github/", "cerebras/"];
 
-export const stripPrefix = (id: string) => id.replace(/^(groq|nvidia|ollama|gemini|openrouter|github)\//, "");
+export const stripPrefix = (id: string) => id.replace(/^(groq|nvidia|ollama|gemini|openrouter|github|cerebras)\//, "");
 
 export const simplifyModelName = (id: string) => {
   let name = id.split("/").pop() ?? id;

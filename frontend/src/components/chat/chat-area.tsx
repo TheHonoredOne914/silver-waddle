@@ -145,6 +145,7 @@ export function ChatArea({
   const geminiModels = providerModels.gemini;
   const openrouterModels = providerModels.openrouter;
   const githubModels = providerModels.github;
+  const cerebrasModels = providerModels.cerebras;
   const {
     webSearchModels,
     setWebSearchModels,
@@ -164,7 +165,8 @@ export function ChatArea({
     { provider: "OpenRouter", models: openrouterModels },
     { provider: "GitHub", models: githubModels },
     { provider: "Ollama", models: ollamaModels },
-  ], [geminiModels, githubModels, groqModels, nvidiaModels, ollamaModels, openrouterModels]);
+    { provider: "Cerebras", models: cerebrasModels },
+  ], [cerebrasModels, geminiModels, githubModels, groqModels, nvidiaModels, ollamaModels, openrouterModels]);
   const hasModelOptions = modelGroups.some(({ models }) => models.length > 0);
   const [connectionWarn, setConnectionWarn] = useState(false);
 
