@@ -4,6 +4,8 @@ import compression from "compression";
 import pinoHttp from "pino-http";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Request } from "express";
 import router from "./routes/index.js";
 import { logger } from "./lib/logger.js";
@@ -212,6 +214,20 @@ app.use("/api", (req, res, next) => {
 app.use("/api/anthropic/conversations/:id/messages", messagesRateLimitMiddleware);
 
 app.use("/api", router);
+
+// ── Serve frontend static files in production ─────────────────────────────────
+if (process.env.NODE_ENV === "production") {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const frontendDist = path.resolve(__dirname, "../../frontend/dist/public");
+
+  app.use(express.static(frontendDist, { index: "index.html" }));
+
+  // SPA fallback — serve index.html for all non-API routes
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api")) return next();
+    res.sendFile(path.join(frontendDist, "index.html"));
+  });
+}
 
 app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (res.headersSent) {
