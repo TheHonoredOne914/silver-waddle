@@ -51,18 +51,33 @@ export function extractProviderKeys(req: ProviderKeyRequest, env: ProviderKeyEnv
   const h = (name: string): string | null => {
     const value = normalizedHeaders[name.toLowerCase()];
     if (!value) return null;
-    const first = Array.isArray(value) ? value[0] : value;
-    return cleanProviderValue(first);
+    const values = Array.isArray(value) ? value : [value];
+    const cleaned = values
+      .map(v => cleanProviderValue(v))
+      .filter((v): v is string => Boolean(v))
+      .flatMap(v => v.split(","))
+      .map(k => k.trim())
+      .filter(Boolean);
+    return cleaned.length > 0 ? Array.from(new Set(cleaned)).join(",") : null;
   };
 
   const getEnvKey = (baseName: string): string | null => {
-    for (let i = 1; i <= 5; i++) {
+    const keys: string[] = [];
+    for (let i = 1; i <= 10; i++) {
       const val = (env as Record<string, string | undefined>)[`${baseName}_${i}`];
       const cleaned = cleanProviderValue(val);
-      if (cleaned) return cleaned;
+      if (cleaned) {
+        keys.push(...cleaned.split(",").map(k => k.trim()).filter(Boolean));
+      }
     }
 
-    return cleanProviderValue((env as Record<string, string | undefined>)[baseName]);
+    const baseVal = cleanProviderValue((env as Record<string, string | undefined>)[baseName]);
+    if (baseVal) {
+      keys.push(...baseVal.split(",").map(k => k.trim()).filter(Boolean));
+    }
+
+    const uniqueKeys = Array.from(new Set(keys));
+    return uniqueKeys.length > 0 ? uniqueKeys.join(",") : null;
   };
 
   return {

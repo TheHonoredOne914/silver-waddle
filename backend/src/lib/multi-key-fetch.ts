@@ -4,10 +4,42 @@ import { logger } from "./logger.js";
 // The key is the original comma-separated string, the value is the current index.
 const keyIndexCache = new Map<string, number>();
 
+// Track known-bad keys per key-string with TTL (5 minutes).
+// Prevents wasting requests on keys that recently returned 401/403.
+const BAD_KEY_TTL_MS = 5 * 60 * 1000;
+const badKeyCache = new Map<string, Map<string, number>>();
+
+function isKeyBad(cacheKey: string, key: string): boolean {
+  const bad = badKeyCache.get(cacheKey);
+  if (!bad) return false;
+  const ts = bad.get(key);
+  if (!ts) return false;
+  if (Date.now() - ts > BAD_KEY_TTL_MS) {
+    bad.delete(key);
+    if (bad.size === 0) badKeyCache.delete(cacheKey);
+    return false;
+  }
+  return true;
+}
+
+function markKeyBad(cacheKey: string, key: string): void {
+  if (!badKeyCache.has(cacheKey)) badKeyCache.set(cacheKey, new Map());
+  badKeyCache.get(cacheKey)!.set(key, Date.now());
+}
+
+function markKeyGood(cacheKey: string, key: string): void {
+  badKeyCache.get(cacheKey)?.delete(key);
+}
+
 /**
  * A drop-in replacement for the global fetch function that intercepts
  * requests with multiple API keys (comma-separated in headers) and 
  * automatically retries on rate limits (429) or quota errors (401/402/403).
+ *
+ * Proactive bad-key tracking:
+ * - Keys that returned 401/403 are marked bad for 5 minutes
+ * - On the next request, known-bad keys are skipped entirely
+ * - On success, a key is cleared from the bad set
  */
 export async function multiKeyFetch(
   input: RequestInfo | URL,
@@ -77,10 +109,25 @@ export async function multiKeyFetch(
   const cacheKey = keyString;
   let currentIndex = keyIndexCache.get(cacheKey) ?? 0;
 
+  // Build the try-order: start from currentIndex, skip known-bad keys
+  const tryOrder: string[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    const candidate = keys[(currentIndex + i) % keys.length];
+    if (!isKeyBad(cacheKey, candidate)) {
+      tryOrder.push(candidate);
+    }
+  }
+  // If all keys are bad, try them all anyway (TTL might expire during retries)
+  if (tryOrder.length === 0) {
+    for (let i = 0; i < keys.length; i++) {
+      tryOrder.push(keys[(currentIndex + i) % keys.length]);
+    }
+  }
+
   let lastResponse: Response | null = null;
 
-  for (let attempt = 0; attempt < keys.length; attempt++) {
-    const activeKey = keys[(currentIndex + attempt) % keys.length];
+  for (let attempt = 0; attempt < tryOrder.length; attempt++) {
+    const activeKey = tryOrder[attempt];
     
     // Update headers or URL with the single active key
     const newHeaders = new Headers(requestHeaders);
@@ -108,9 +155,6 @@ export async function multiKeyFetch(
       }
     } else {
       if (isRequestObj && requestObj) {
-        // Reconstruct the request to avoid "body stream already read" if we need to retry
-        // Note: If it's a stream body we might not be able to clone it easily, 
-        // but usually SDKs pass stringified JSON which clones fine.
         const clonedReq = requestObj.clone();
         const newInit: RequestInit = {
           method: clonedReq.method,
@@ -130,36 +174,40 @@ export async function multiKeyFetch(
       lastResponse = await fetchPromise;
     } catch (networkErr) {
       // If the abort signal was already triggered (timeout / pipeline cancel), don't retry.
-      // All subsequent fetches with the same signal will also fail instantly.
       if ((init as RequestInit)?.signal?.aborted) {
-        if (attempt === keys.length - 1) throw networkErr;
-        // signal aborted — no point trying other keys
+        if (attempt === tryOrder.length - 1) throw networkErr;
         break;
       }
       const maskedKey = `...${activeKey.slice(-4)}`;
-      logger.warn(`[multi-key-fetch] Key ${maskedKey} network error: ${(networkErr as Error)?.message ?? networkErr}. Rolling over to next key. (${attempt + 1}/${keys.length})`);
-      if (attempt === keys.length - 1) throw networkErr; // all keys exhausted, re-throw
+      logger.warn(`[multi-key-fetch] Key ${maskedKey} network error: ${(networkErr as Error)?.message ?? networkErr}. Rolling over to next key. (${attempt + 1}/${tryOrder.length})`);
+      markKeyBad(cacheKey, activeKey);
+      if (attempt === tryOrder.length - 1) throw networkErr;
       continue;
     }
 
-    // Retry on auth/rate-limit errors AND server errors — any non-success response
-    // that indicates the key or server is temporarily broken
+    // Retry on auth/rate-limit errors AND server errors
     const retryableStatus = [401, 402, 403, 408, 429, 500, 502, 503, 504, 529].includes(lastResponse.status);
     if (retryableStatus) {
-      // Don't retry if signal was aborted mid-flight (race condition with timeout)
       if ((init as RequestInit)?.signal?.aborted) break;
       const maskedKey = `...${activeKey.slice(-4)}`;
-      logger.warn(`[multi-key-fetch] Key ${maskedKey} got ${lastResponse.status}. Rolling over to next key. (${attempt + 1}/${keys.length})`);
+      logger.warn(`[multi-key-fetch] Key ${maskedKey} got ${lastResponse.status}. Rolling over to next key. (${attempt + 1}/${tryOrder.length})`);
+      // Mark auth failures as bad keys (they won't magically fix themselves in seconds)
+      if (lastResponse.status === 401 || lastResponse.status === 403) {
+        markKeyBad(cacheKey, activeKey);
+      }
       continue;
     }
 
-    // Success or non-retryable error (like 400 Bad Request)
-    // Update cache so next time we start at the key that worked
-    keyIndexCache.set(cacheKey, (currentIndex + attempt) % keys.length);
+    // Success or non-retryable error — update cache and mark key as good
+    const originalIndex = keys.indexOf(activeKey);
+    keyIndexCache.set(cacheKey, originalIndex >= 0 ? originalIndex : (currentIndex + attempt) % keys.length);
+    if (lastResponse.ok) {
+      markKeyGood(cacheKey, activeKey);
+    }
     return lastResponse;
   }
 
-  // If all keys failed, bump the index anyway so we don't hammer the exact same sequence next time
+  // All keys failed — bump index so we don't hammer the exact same sequence
   keyIndexCache.set(cacheKey, (currentIndex + 1) % keys.length);
   return lastResponse!;
 }

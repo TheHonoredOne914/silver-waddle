@@ -1758,6 +1758,7 @@ router.patch("/anthropic/conversations/:id", async (req, res) => {
 });
 
 // Generate AI conversation title from first user message
+// Uses multiKeyFetch directly for seamless multi-key rotation across all providers.
 router.post("/anthropic/generate-title", async (req, res) => {
   const content = typeof req.body?.content === "string" ? req.body.content.trim() : "";
   if (!content) { res.status(400).json({ error: "content is required" }); return; }
@@ -1765,28 +1766,43 @@ router.post("/anthropic/generate-title", async (req, res) => {
 
   const groqKey = (req.headers["x-groq-api-key"] as string | undefined) ?? null;
   const nvidiaKey = (req.headers["x-nvidia-api-key"] as string | undefined) ?? null;
+  const cerebrasKey = (req.headers["x-cerebras-api-key"] as string | undefined) ?? null;
+  const geminiKey = (req.headers["x-gemini-api-key"] as string | undefined) ?? null;
 
-  try {
-    const titlePrompt = [
-      { role: "system" as const, content: "Generate a concise 4-6 word title (no quotes, no punctuation) for this conversation." },
-      { role: "user" as const, content: `Title for: ${content.slice(0, 500)}` },
-    ];
-    let title = "";
-    if (isGroqEnabled(groqKey)) {
-      const groq = getGroqClient(groqKey);
-      const r = await groq.chat.completions.create({ model: "llama-3.1-8b-instant", max_tokens: 20, messages: titlePrompt });
-      title = r.choices?.[0]?.message?.content?.trim() ?? "";
-    } else if (isNvidiaEnabled(nvidiaKey)) {
-      const nvidia = getNvidiaClient(nvidiaKey);
-      const r = await nvidia.chat.completions.create({ model: "nvidia/llama-3.1-nemotron-nano-8b-v1", max_tokens: 20, messages: titlePrompt });
-      title = r.choices?.[0]?.message?.content?.trim() ?? "";
+  const titlePrompt = [
+    { role: "system" as const, content: "Generate a concise 4-6 word title (no quotes, no punctuation) for this conversation." },
+    { role: "user" as const, content: `Title for: ${content.slice(0, 500)}` },
+  ];
+
+  // Ordered list of providers to try — multiKeyFetch handles comma-separated key rotation
+  const providers: Array<{ name: string; key: string | null; baseUrl: string; model: string }> = [
+    { name: "groq", key: groqKey ?? process.env.GROQ_API_KEY ?? null, baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.1-8b-instant" },
+    { name: "nvidia", key: nvidiaKey ?? process.env.NVIDIA_API_KEY ?? null, baseUrl: "https://integrate.api.nvidia.com/v1", model: "nvidia/llama-3.1-nemotron-nano-8b-v1" },
+    { name: "cerebras", key: cerebrasKey ?? process.env.CEREBRAS_API_KEY ?? null, baseUrl: "https://api.cerebras.ai/v1", model: "llama3.1-8b" },
+    { name: "gemini", key: geminiKey ?? process.env.GEMINI_API_KEY ?? null, baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.0-flash" },
+  ];
+
+  let title = "";
+  for (const p of providers) {
+    if (!p.key) continue;
+    try {
+      const resp = await multiKeyFetch(`${p.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.key}` },
+        body: JSON.stringify({ model: p.model, max_tokens: 20, messages: titlePrompt }),
+      });
+      if (resp.ok) {
+        const data = await resp.json() as any;
+        title = data.choices?.[0]?.message?.content?.trim() ?? "";
+        if (title) break;
+      }
+    } catch {
+      // Expected — continue to next provider
     }
-    if (!title) title = fallback();
-    res.json({ title: title.slice(0, 80) });
-  } catch (err) {
-    (req as any).log?.error?.({ err }, "generate-title failed");
-    res.json({ title: fallback() });
   }
+
+  if (!title) title = fallback();
+  res.json({ title: title.slice(0, 80) });
 });
 
 router.get("/anthropic/conversations/:id", async (req, res) => {
