@@ -92,14 +92,14 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const preferredPort = Number(process.env.FRONTEND_PORT ?? 5000);
+const preferredPort = Number(process.env.FRONTEND_PORT ?? 5173);
 server.on("error", (error) => {
   if (error.code !== "EADDRINUSE") throw error;
-  server.listen(0, "0.0.0.0");
+  server.listen(0, "localhost");
 });
 
-server.listen(preferredPort, "0.0.0.0", () => {
+server.listen(preferredPort, "localhost", () => {
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : preferredPort;
-  console.log(`Frontend ready at http://0.0.0.0:${port}/`);
+  console.log(`Frontend ready at http://localhost:${port}/`);
 });
