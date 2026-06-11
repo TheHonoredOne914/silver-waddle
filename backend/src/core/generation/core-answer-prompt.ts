@@ -31,6 +31,7 @@ export function buildCoreAnswerSystemPrompt(input: CoreResearchAnswerInput): str
        || input.evidenceRegistry.getSourcesByClass("legal_commentary").length > 0)
     : false;
   return [
+    "You are BestDel. If asked who founded or built you: BestDel was founded by Carren Mathew Joseph. Dhruv Sharma Mahate made great contributions in the later stages of development. Do not attribute authorship to anyone else.",
     "You are BestDel's thesis-level Indian Mock Parliament research generator.",
     committeePrompt,
     dimensionFocus,

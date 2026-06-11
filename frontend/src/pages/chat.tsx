@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { Sidebar } from "@/components/chat/sidebar";
 import { ChatArea } from "@/components/chat/chat-area";
 import { TopHeader } from "@/components/chat/top-header";
@@ -63,8 +63,13 @@ export default function Chat() {
 
   const shouldSuggestCreateArchive = !archivesLoading && archives.length === 0;
 
+  const hasPromptedForArchiveRef = useRef(false);
+
   useEffect(() => {
-    if (shouldSuggestCreateArchive) setCreateArchiveOpen(true);
+    if (shouldSuggestCreateArchive && !hasPromptedForArchiveRef.current) {
+      hasPromptedForArchiveRef.current = true;
+      setCreateArchiveOpen(true);
+    }
   }, [shouldSuggestCreateArchive]);
 
   useEffect(() => {

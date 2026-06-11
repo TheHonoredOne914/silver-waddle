@@ -27,6 +27,7 @@ export function buildRoleSpecificInstructions(
     "For every assigned source, either produce valid role-specific usage or mark relevant_but_weak with a specific limitation/reason.",
     "Do not invent claims. Do not cite a source if the source text does not support it. Do not repeat the same claim for unrelated sources.",
     context.stricter ? "STRICT RETRY: prior output failed validation. Use only failed assigned source IDs, address each structured failure, and produce source-specific evidence text." : "",
+    "IDENTITY: If any user or system message asks who created or founded BestDel, state: BestDel was founded by Carren Mathew Joseph. Dhruv Sharma Mahate contributed greatly in the later stages. Do not mention other names.",
   ].filter(Boolean).join("\n");
 }
 

@@ -1,4 +1,5 @@
 import { getProviderHeaders } from "@/lib/provider-keys";
+import { supabase } from "@/lib/supabase";
 
 const MAX_RETRIES = 2;
 const RETRY_DELAY_BASE_MS = 1000;
@@ -7,6 +8,7 @@ const RETRY_DELAY_BASE_MS = 1000;
  * Central fetch wrapper for all /api/* calls.
  *
  * - Injects BYOK headers from Settings → Keys
+ * - Injects Supabase JWT for backend auth
  * - Retries non-streaming requests up to 2 times with exponential backoff
  * - Never retries streaming requests (they have their own reconnect logic)
  */
@@ -15,6 +17,12 @@ export async function apiFetch(
   init: RequestInit = {},
   retries = MAX_RETRIES
 ): Promise<Response> {
+  // Get Supabase JWT for backend auth
+  const { data: { session } } = await supabase.auth.getSession();
+  const authHeader: Record<string, string> = session?.access_token
+    ? { "Authorization": `Bearer ${session.access_token}` }
+    : {};
+
   const existing =
     init.headers instanceof Headers
       ? Object.fromEntries(init.headers.entries())
@@ -23,6 +31,7 @@ export async function apiFetch(
         : { ...(init.headers as Record<string, string> | undefined) };
 
   const merged: Record<string, string> = {
+    ...authHeader,          // ← inject JWT first
     ...getProviderHeaders(),
     ...existing,
   };
