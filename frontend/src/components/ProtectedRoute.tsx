@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
+import { isSupabaseConfigured } from "@/lib/supabase";
 import { Loader2 } from "lucide-react";
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -8,10 +9,15 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const [, navigate] = useLocation();
 
   useEffect(() => {
+    if (!isSupabaseConfigured) return;
     if (!loading && !session) {
       navigate("/auth");
     }
   }, [session, loading, navigate]);
+
+  if (!isSupabaseConfigured) {
+    return <>{children}</>;
+  }
 
   if (loading) {
     return (
@@ -22,7 +28,6 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (!session) {
-    // Show nothing while the useEffect redirect fires
     return null;
   }
 
