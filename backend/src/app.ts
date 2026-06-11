@@ -11,6 +11,25 @@ import { ProviderRouterError } from "./lib/provider-router.js";
 import { QueueFullError } from "./lib/request-queue.js";
 import { config } from "./config.js";
 
+// Conditional Redis store for distributed rate limiting
+async function buildRateLimitStore() {
+  const upstashUrl = process.env.UPSTASH_REDIS_REST_URL?.trim();
+  const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
+  if (upstashUrl && upstashToken) {
+    try {
+      const { default: RedisStore } = await import("rate-limit-redis");
+      const { Redis } = await import("@upstash/redis");
+      const redis = new Redis({ url: upstashUrl, token: upstashToken });
+      return new RedisStore({ sendCommand: (...args: string[]) => redis.call(...args as any) });
+    } catch {
+      logger.warn("Upstash Redis unavailable — using in-memory rate limit store");
+    }
+  } else if (process.env.NODE_ENV === "production") {
+    logger.warn("No Redis configured for rate limiting — using per-instance memory store (not suitable for multi-instance deployments)");
+  }
+  return undefined; // falls back to default MemoryStore
+}
+
 const app: Express = express();
 
 // Trust first proxy in production (Nginx, Railway, Render, Cloudflare, etc.)
@@ -98,7 +117,8 @@ const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests", code: "rate_limited" },
-  skip: (req) => req.path === "/api/healthz",
+  skip: (req) => req.path === "/healthz",
+  store: await buildRateLimitStore(),
 });
 
 // ── Council limiter — 1 run per 24 hours per IP ─────────────────────────────
@@ -111,6 +131,7 @@ const councilLimiter = rateLimit({
     error: "Council mode is limited to 1 run per day. Come back tomorrow.",
     code: "council_daily_limit",
   },
+  store: await buildRateLimitStore(),
 });
 
 // ── Research limiter — deep_research / web_search / fast_research ───────────
@@ -123,6 +144,7 @@ const researchLimiter = rateLimit({
     error: "Research rate limit exceeded (30/hr). Please wait before submitting another run.",
     code: "research_rate_limited",
   },
+  store: await buildRateLimitStore(),
 });
 
 // ── Mode-aware middleware — applied only to the /messages route ──────────────
@@ -145,6 +167,29 @@ function messagesRateLimitMiddleware(
 
 // Apply general limiter to all /api routes
 app.use("/api", generalLimiter);
+
+// ── Internal API key auth (all /api routes except /healthz) ──────────────
+const API_SECRET = process.env.INTERNAL_API_SECRET?.trim();
+app.use("/api", (req, res, next) => {
+  // Skip auth for health probes
+  if (req.path === "/healthz") return next();
+
+  if (!API_SECRET) {
+    // If no secret configured, allow in development; block in production
+    if (process.env.NODE_ENV === "production") {
+      res.status(503).json({ error: "API auth not configured", code: "auth_misconfigured" });
+      return;
+    }
+    return next();
+  }
+
+  const provided = (req.headers["x-api-key"] as string | undefined)?.trim();
+  if (!provided || provided !== API_SECRET) {
+    res.status(401).json({ error: "Unauthorized", code: "unauthorized" });
+    return;
+  }
+  next();
+});
 
 // Apply mode-aware limiter to the research trigger endpoint
 app.use("/api/anthropic/conversations/:id/messages", messagesRateLimitMiddleware);
