@@ -12,6 +12,7 @@ import { logger } from "./lib/logger.js";
 import { ProviderRouterError } from "./lib/provider-router.js";
 import { QueueFullError } from "./lib/request-queue.js";
 import { config } from "./config.js";
+import { verifySupabaseJwt } from "./middlewares/supabase-jwt.js";
 
 // Conditional Redis store for distributed rate limiting
 async function buildRateLimitStore() {
@@ -175,7 +176,7 @@ app.use("/api", generalLimiter);
 
 // ── Internal API key auth (all /api routes except /healthz) ──────────────
 const API_SECRET = process.env.INTERNAL_API_SECRET?.trim();
-app.use("/api", (req, res, next) => {
+app.use("/api", async (req, res, next) => {
   // Skip auth for health probes
   if (req.path === "/healthz") return next();
 
@@ -185,15 +186,10 @@ app.use("/api", (req, res, next) => {
     return next();
   }
 
-  // 2. Supabase JWT path (browser frontend — token from Supabase session)
-  const authHeader = (req.headers["authorization"] as string | undefined) ?? "";
-  if (authHeader.startsWith("Bearer ")) {
-    // We trust the token only if SUPABASE_JWT_SECRET is not configured;
-    // with it configured, verify properly. For now: presence check is
-    // sufficient for single-tenant self-hosted installs.
-    // TODO: add full JWT verification with SUPABASE_JWT_SECRET when
-    // running multi-tenant.
-    return next();
+  // 2. Supabase JWT verification (browser frontend — token from Supabase session)
+  const authHeader = req.headers["authorization"] as string | undefined;
+  if (authHeader?.startsWith("Bearer ")) {
+    return verifySupabaseJwt(req, res, next);
   }
 
   // 3. No secret configured in dev → allow through with a warning
