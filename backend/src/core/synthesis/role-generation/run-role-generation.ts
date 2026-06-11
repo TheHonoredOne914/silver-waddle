@@ -18,6 +18,8 @@ import { buildRolePrompt } from "./role-prompt-builder.js";
 import { parseRoleOutputItems } from "./role-output-parser.js";
 import { buildRoleRetryPrompt, failedSourceIdsForRetry, researchModeForRetry } from "./role-retry-planner.js";
 import { buildSourceGapRoleContext } from "./source-gap-role-context.js";
+import { getLimitProfile } from "../../providers/limits/provider-limit-registry.js";
+import { estimateTokens } from "../../generation/prompt-budget.js";
 import {
   ROLE_GENERATION_SCHEMA_VERSION,
   type ModelRoleRunnerInput,
@@ -233,7 +235,15 @@ async function runSourceUsageBatch(input: ModelRoleSourceUsageInput, batch: Evid
         previousPromptFingerprint: `${input.roleName}:${assignedSourceIds.join(",")}`,
       })
     : undefined;
-  const prompt = buildRolePrompt({
+
+  // Budget gate: trim batch to fit provider's safe token budget
+  const limitProfile = getLimitProfile(providerName, model);
+  const safeTokenBudget = limitProfile.safeInputBudget;
+  const BASE_OVERHEAD_TOKENS = 800; // system prompt + claimGraph + sourceGap overhead
+  const PER_CARD_RESERVE = Math.max(1, Math.floor((safeTokenBudget - BASE_OVERHEAD_TOKENS) / Math.max(1, batch.length)));
+
+  // Build full prompt once to check size
+  const fullPrompt = buildRolePrompt({
     roleName: input.roleName,
     researchMode,
     cards: batch,
@@ -242,6 +252,33 @@ async function runSourceUsageBatch(input: ModelRoleSourceUsageInput, batch: Evid
     claimGraphContext: buildClaimGraphRoleContext(input.claimGraph, { roleName: input.roleName, assignedSourceIds }),
     sourceGapContext: buildSourceGapRoleContext(input.roleName, input.sourceGapReport),
   });
+  const fullPromptTokens = estimateTokens(fullPrompt.system + "\n\n" + fullPrompt.user);
+
+  let effectiveBatch = batch;
+  if (fullPromptTokens > safeTokenBudget) {
+    // Trim cards until estimated tokens fit — preserve citation-strongest cards first
+    const charsPerToken = (fullPrompt.system.length + fullPrompt.user.length) / Math.max(1, fullPromptTokens);
+    const targetChars = Math.floor(safeTokenBudget * charsPerToken * 0.92); // 8% margin
+    const systemChars = fullPrompt.system.length;
+    const availableUserChars = Math.max(0, targetChars - systemChars - 200); // 200 for overhead
+    // Estimate chars per card from the full prompt user section
+    const userCharsPerCard = fullPrompt.user.length / Math.max(1, batch.length);
+    const maxCards = Math.max(1, Math.floor(availableUserChars / Math.max(1, userCharsPerCard)));
+    effectiveBatch = batch.slice(0, maxCards);
+  }
+
+  const prompt = effectiveBatch === batch
+    ? fullPrompt
+    : buildRolePrompt({
+        roleName: input.roleName,
+        researchMode,
+        cards: effectiveBatch,
+        stricter,
+        retryInstruction,
+        claimGraphContext: buildClaimGraphRoleContext(input.claimGraph, { roleName: input.roleName, assignedSourceIds }),
+        sourceGapContext: buildSourceGapRoleContext(input.roleName, input.sourceGapReport),
+      });
+
   const request: ProviderRequest = {
     model,
     roleName: input.roleName,
@@ -257,7 +294,7 @@ async function runSourceUsageBatch(input: ModelRoleSourceUsageInput, batch: Evid
   const response = typeof (input.providerRouter as any).completeJson === "function"
     ? await (input.providerRouter as any).completeJson(providerName, request)
     : await input.providerRouter!.complete(providerName, request);
-  const items = parseRoleOutputItems("json" in response ? response.json : response.content, batch);
+  const items = parseRoleOutputItems("json" in response ? response.json : response.content, effectiveBatch);
   const guarded = filterOutOfBatchUsageItems(input.roleName, items, assignedSourceIds);
   if (guarded.warning) {
     input.emitSourceUsageEvent?.("source_usage_cross_batch_rejected", {

@@ -129,7 +129,13 @@ export async function multiKeyFetch(
     try {
       lastResponse = await fetchPromise;
     } catch (networkErr) {
-      // Network-level failure (DNS, connection reset, timeout, etc.) — rotate to next key
+      // If the abort signal was already triggered (timeout / pipeline cancel), don't retry.
+      // All subsequent fetches with the same signal will also fail instantly.
+      if ((init as RequestInit)?.signal?.aborted) {
+        if (attempt === keys.length - 1) throw networkErr;
+        // signal aborted — no point trying other keys
+        break;
+      }
       const maskedKey = `...${activeKey.slice(-4)}`;
       logger.warn(`[multi-key-fetch] Key ${maskedKey} network error: ${(networkErr as Error)?.message ?? networkErr}. Rolling over to next key. (${attempt + 1}/${keys.length})`);
       if (attempt === keys.length - 1) throw networkErr; // all keys exhausted, re-throw
@@ -140,6 +146,8 @@ export async function multiKeyFetch(
     // that indicates the key or server is temporarily broken
     const retryableStatus = [401, 402, 403, 408, 429, 500, 502, 503, 504, 529].includes(lastResponse.status);
     if (retryableStatus) {
+      // Don't retry if signal was aborted mid-flight (race condition with timeout)
+      if ((init as RequestInit)?.signal?.aborted) break;
       const maskedKey = `...${activeKey.slice(-4)}`;
       logger.warn(`[multi-key-fetch] Key ${maskedKey} got ${lastResponse.status}. Rolling over to next key. (${attempt + 1}/${keys.length})`);
       continue;

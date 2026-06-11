@@ -617,6 +617,14 @@ async function buildFinalAnswer(input: CoreResearchAnswerInput, sourceIds: numbe
       input.providerRunState?.recordFailure(candidate.providerName, retryReport);
       providerFailureReports.push({ ...retryReport, model: candidate.model, stage: "core_generation", fallbackAttempted: candidates.length > 1 });
       if (retryReport.code === "request_too_large") forceFallback = true;
+    } else if (
+      firstReport.code === "rate_limited" ||
+      firstReport.code === "timeout" ||
+      firstReport.code === "network_error" ||
+      firstReport.code === "provider_unavailable"
+    ) {
+      // Transient error — always roll to next candidate
+      forceFallback = true;
     }
   }
   const safe = providerFailureReports[0] ?? safeProviderErrorReport(input.providerName, new Error("Core generation provider failed"), { stage: "core_generation" });
