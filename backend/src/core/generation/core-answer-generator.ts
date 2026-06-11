@@ -688,7 +688,7 @@ export function buildGenerationCandidates(input: CoreResearchAnswerInput): Array
     : (["nvidia", "gemini", "github", "openrouter", "groq", "cerebras"] as ProviderName[]).filter((providerName) => (input.providerRouter as any)?.hasProvider?.(providerName));
   const defaults: Record<ProviderName, string> = {
     groq: "llama-3.3-70b-versatile",
-    openrouter: "qwen/qwen3-32b:free",
+    openrouter: "qwen/qwen3-32b",
     gemini: "gemini-2.5-pro",
     nvidia: "nvidia/llama-3.3-nemotron-super-49b-v1",
     github: "openai/gpt-4.1",
@@ -719,7 +719,7 @@ export function buildGenerationCandidates(input: CoreResearchAnswerInput): Array
   });
 }
 
-const STALE_GENERATION_MODELS = /claude-3\.5-sonnet|claude-3-5-sonnet|gemini-1\.5-pro|gemini-1\.5-flash|kimi-k2\.6|nemotron-3-ultra-550b-a55b/i;
+const STALE_GENERATION_MODELS = /claude-3\.5-sonnet|claude-3-5-sonnet|gemini-1\.5-pro|gemini-1\.5-flash|kimi-k2\.6|nemotron-3-ultra-550b-a55b|nemotron-ultra-253b/i;
 const NON_ANSWER_GENERATION_MODELS = /content-safety|safeguard|guard|moderation|embed|rerank|search|audio|image|vision|parse|translate/i;
 
 function preferredModelForProvider(
@@ -736,9 +736,9 @@ function preferredModelForProvider(
   if (providerName === "openrouter") {
     const usable = liveModels.filter((model) => !NON_ANSWER_GENERATION_MODELS.test(model));
     return usable.find((model) => model === defaults.openrouter)
-      ?? usable.find((model) => /qwen\/qwen3-32b:free/i.test(model))
-      ?? usable.find((model) => /openai\/gpt-oss-120b:free/i.test(model))
-      ?? usable.find((model) => /moonshotai\/kimi-k2\.6:free/i.test(model))
+      ?? usable.find((model) => /qwen\/qwen3-32b/i.test(model))
+      ?? usable.find((model) => /openai\/gpt-oss-120b/i.test(model))
+      ?? usable.find((model) => /moonshotai\/kimi-k2\.6/i.test(model))
       ?? usable.find((model) => /:free$/i.test(model))
       ?? usable[0]
       ?? defaults.openrouter;

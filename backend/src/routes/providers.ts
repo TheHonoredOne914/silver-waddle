@@ -78,7 +78,7 @@ export const OLLAMA_CATALOG: ProviderModelListItem[] = [
 
 export const NVIDIA_CATALOG: ProviderModelListItem[] = [
   { id: "moonshotai/kimi-k2.6", name: "Kimi K2.6", ownedBy: "moonshotai", badge: "agentic" },
-  { id: "nvidia/llama-3.1-nemotron-ultra-253b-v1", name: "Nemotron Ultra", ownedBy: "nvidia", badge: "ultra" },
+  { id: "deepseek-ai/deepseek-v4-0324", name: "DeepSeek V4", ownedBy: "deepseek", badge: "reason" },
   { id: "nvidia/llama-3.3-nemotron-super-49b-v1", name: "Nemotron Super", ownedBy: "nvidia", badge: "flagship" },
   { id: "nvidia/llama-3.1-nemotron-nano-8b-v1", name: "Nemotron Nano", ownedBy: "nvidia", badge: "fast" },
   { id: "meta/llama-3.3-70b-instruct", name: "Llama 3.3 70B Instruct", ownedBy: "meta", badge: "meta" },

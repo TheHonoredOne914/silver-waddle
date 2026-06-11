@@ -5,7 +5,7 @@ import type { ProviderName } from "./provider-types.js";
 
 const STRONG_MODELS: ProviderHealthCandidate[] = [
   { providerName: "groq", model: "llama-3.3-70b-versatile" },
-  { providerName: "openrouter", model: "qwen/qwen3-32b:free" },
+  { providerName: "openrouter", model: "qwen/qwen3-32b" },
   { providerName: "nvidia", model: "nvidia/llama-3.3-nemotron-super-49b-v1" },
   { providerName: "gemini", model: "gemini-2.5-pro" },
   { providerName: "openai", model: "gpt-4.1" },
@@ -15,7 +15,7 @@ const STRONG_MODELS: ProviderHealthCandidate[] = [
 
 const FAST_MODELS: ProviderHealthCandidate[] = [
   { providerName: "groq", model: "llama-3.3-70b-versatile" },
-  { providerName: "openrouter", model: "qwen/qwen3-32b:free" },
+  { providerName: "openrouter", model: "qwen/qwen3-32b" },
   { providerName: "nvidia", model: "nvidia/llama-3.3-nemotron-super-49b-v1" },
   { providerName: "gemini", model: "gemini-2.5-flash" },
   { providerName: "cerebras", model: "llama3.1-8b" },

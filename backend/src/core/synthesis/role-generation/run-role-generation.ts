@@ -29,7 +29,7 @@ import {
 
 const DEFAULT_FALLBACK_MODELS: Array<{ providerName: ProviderName; model: string }> = [
   { providerName: "groq", model: "llama-3.3-70b-versatile" },
-  { providerName: "openrouter", model: "qwen/qwen3-32b:free" },
+  { providerName: "openrouter", model: "qwen/qwen3-32b" },
   { providerName: "nvidia", model: "nvidia/llama-3.3-nemotron-super-49b-v1" },
   { providerName: "gemini", model: "gemini-2.5-flash" },
   { providerName: "github", model: "openai/gpt-4.1" },
