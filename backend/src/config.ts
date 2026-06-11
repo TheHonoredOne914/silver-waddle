@@ -16,6 +16,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   DATABASE_URL: z.string().min(1).default("sqlite:./bestdel.db"),
   REDIS_URL: z.string().url().optional(),
+  INTERNAL_API_SECRET: z.string().optional(),
   STREAM_TIMEOUT_MS: z.coerce.number().default(600_000),
   MAX_DEEP_RESEARCH_CONCURRENCY: z.coerce.number().default(3),
   MAX_WEB_SEARCH_CONCURRENCY: z.coerce.number().default(8),

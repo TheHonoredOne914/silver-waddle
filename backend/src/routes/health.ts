@@ -95,12 +95,9 @@ async function collectProviderDiagnostics(req?: { headers: Record<string, string
       return list.data.length > 0;
     }),
     nvidia: await runProviderProbe(Boolean(nvidiaEnabled && nvidiaClient), async () => {
-      await nvidiaClient!.chat.completions.create({
-        model: "nvidia/llama-3.1-nemotron-nano-8b-v1",
-        max_tokens: 1,
-        messages: [{ role: "user", content: "hi" }],
-      });
-      return true;
+      // Use model listing instead of inference — no tokens consumed
+      const list = await nvidiaClient!.models.list();
+      return list.data.length > 0;
     }),
     serper: await runProviderProbe(Boolean(keys?.serperKey?.trim()), async () =>
       probeFetch("https://google.serper.dev/search", {

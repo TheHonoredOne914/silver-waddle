@@ -72,5 +72,9 @@
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vitest": "^4.1.7"
+  },
+  "optionalDependencies": {
+    "@upstash/redis": "^1.38.0",
+    "rate-limit-redis": "^5.0.0"
   }
 }

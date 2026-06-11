@@ -4808,29 +4808,41 @@ router.post("/anthropic/conversations/:id/messages", async (req, res) => {
     || TIMEOUT_CONFIG[routeMode as keyof typeof TIMEOUT_CONFIG]
     || 5 * 60 * 1000;
 
-  const convo = await getConversationById(conversationId);
-  if (!convo) { res.status(404).json({ error: "Conversation not found" }); return; }
+  // Pre-flight DB operations wrapped in try/catch to handle errors before SSE setup
+  let convo, archive, archiveContext, userMessage, assistantMessage, combinedSystemPrompt;
+  try {
+    convo = await getConversationById(conversationId);
+    if (!convo) { res.status(404).json({ error: "Conversation not found" }); return; }
+    const archiveId = convo.archive_id ?? null;
+    archive = archiveId ? await getArchiveById(archiveId) : null;
+    archiveContext = archiveId ? await getArchiveContext(archiveId) : null;
+    const archiveTopic = archive?.topic?.trim() || "";
+    const archiveSummary = archiveContext?.summary?.trim() || "";
+    combinedSystemPrompt = composeAnthropicSystemPrompt({
+      archiveTopic,
+      archiveSummary,
+      userSystemPrompt: rawSystemPrompt,
+    });
+
+    userMessage = await createMessage(conversationId, "user", userContent);
+    assistantMessage = isResearchRouteMode(routeMode)
+      ? await createMessage(
+          conversationId,
+          "assistant",
+          freshnessResearchMode
+            ? "Freshness-sensitive research run started. Waiting for live-source output..."
+            : "Research run started. Waiting for streamed output...",
+        )
+      : undefined;
+  } catch (dbErr) {
+    req.log?.error?.({ err: dbErr }, "Pre-flight DB error");
+    res.status(503).json({ error: "Database unavailable", code: "db_error" });
+    return;
+  }
+  
   const archiveId = convo.archive_id ?? null;
-  const archive = archiveId ? await getArchiveById(archiveId) : null;
-  const archiveContext = archiveId ? await getArchiveContext(archiveId) : null;
   const archiveTopic = archive?.topic?.trim() || "";
   const archiveSummary = archiveContext?.summary?.trim() || "";
-  const combinedSystemPrompt = composeAnthropicSystemPrompt({
-    archiveTopic,
-    archiveSummary,
-    userSystemPrompt: rawSystemPrompt,
-  });
-
-  const userMessage = await createMessage(conversationId, "user", userContent);
-  const assistantMessage = isResearchRouteMode(routeMode)
-    ? await createMessage(
-        conversationId,
-        "assistant",
-        freshnessResearchMode
-          ? "Freshness-sensitive research run started. Waiting for live-source output..."
-          : "Research run started. Waiting for streamed output...",
-      )
-    : undefined;
   const requestId = `req_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
   const runId = `run_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
   const runIdentity: ResearchRunIdentity = {
@@ -5159,9 +5171,6 @@ router.post("/anthropic/conversations/:id/messages", async (req, res) => {
         liveRetrieval: true,
         allowMockRetrieval: false,
         allowSyntheticSourceUsage: false,
-        onStream: (chunk) => {
-          sendRunEvent('answer_delta', { content: chunk });
-        },
         onStream: (chunk: string) => {
           sendRunEvent('answer_delta', { content: chunk });
         },
